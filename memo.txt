@@ -1,0 +1,729 @@
+================================================================================
+        RÉSUMÉ COMPLET - TP NOTÉ PROGRAMMATION PARALLÈLE POSIX
+================================================================================
+
+Date: Janvier 2026
+Auteur: Assistant de révision
+Sources: Cours Polytech Tours - Outils pour la synchronisation
+
+================================================================================
+TABLE DES MATIÈRES
+================================================================================
+
+1. Création et Gestion des Threads
+2. Protection des Données Partagées avec Mutex
+3. Synchronisation avec Barrières
+4. Variables de Condition
+5. Sémaphores POSIX
+6. Stratégies de Parallélisation
+7. Checklist Avant le TP Noté
+8. Pièges à Éviter Absolument
+9. Template Type pour le TP Noté
+10. Questions Type à Préparer
+
+================================================================================
+1. CRÉATION ET GESTION DES THREADS
+================================================================================
+
+À SAVOIR FAIRE ABSOLUMENT:
+
+#include <pthread.h>
+
+// Déclaration d'un tableau de threads
+pthread_t threads[N];
+
+// Structure pour passer des paramètres
+typedef struct {
+    int id;
+    int param1;
+    // autres paramètres...
+} ThreadData;
+
+// Fonction exécutée par le thread
+void* fonction_thread(void* arg) {
+    ThreadData* data = (ThreadData*)arg;
+    // Votre code...
+    return NULL;  // ou malloc d'un résultat
+}
+
+// Dans main: création des threads
+for (int i = 0; i < N; i++) {
+    pthread_create(&threads[i], NULL, fonction_thread, &data[i]);
+}
+
+// Attendre la fin des threads
+for (int i = 0; i < N; i++) {
+    pthread_join(threads[i], NULL);
+}
+
+POINTS CRITIQUES:
+✅ Ne jamais passer l'adresse d'une variable locale de boucle
+✅ Utiliser un tableau pour stocker les paramètres
+✅ Toujours faire pthread_join pour éviter les fuites mémoire
+
+FONCTIONS ESSENTIELLES:
+- pthread_create(&thread, attributs, fonction, argument)
+  → Crée un nouveau thread qui exécute la fonction donnée
+  
+- pthread_join(thread, &valeur_retour)
+  → Attend la terminaison du thread (BLOQUANT)
+  → Récupère la valeur de retour si non-NULL
+  
+- pthread_self()
+  → Retourne l'identifiant du thread appelant
+  
+- pthread_exit(valeur)
+  → Termine le thread avec une valeur de retour
+
+COMPILATION:
+gcc votre_programme.c -o programme -lpthread
+
+================================================================================
+2. PROTECTION DES DONNÉES PARTAGÉES AVEC MUTEX
+================================================================================
+
+QUAND UTILISER UN MUTEX?
+
+Utilisez un mutex quand:
+- Plusieurs threads MODIFIENT une variable partagée
+- Vous avez une SECTION CRITIQUE (lecture + modification + écriture)
+
+CODE TYPE:
+
+pthread_mutex_t mutex;
+
+// Initialisation
+pthread_mutex_init(&mutex, NULL);
+
+// Protection d'une section critique
+pthread_mutex_lock(&mutex);
+// --- SECTION CRITIQUE ---
+variable_partagee = variable_partagee + 1;  // Pas atomique !
+// --- FIN SECTION CRITIQUE ---
+pthread_mutex_unlock(&mutex);
+
+// Destruction
+pthread_mutex_destroy(&mutex);
+
+⚠️ ERREUR CLASSIQUE - Race Condition:
+
+// ❌ FAUX - Race condition !
+for (int i = 0; i < 100000; i++) {
+    somme = somme + numero;  // Pas protégé
+}
+
+// ✅ CORRECT
+for (int i = 0; i < 100000; i++) {
+    pthread_mutex_lock(&mutex);
+    somme = somme + numero;
+    pthread_mutex_unlock(&mutex);
+}
+
+RÈGLES D'OR:
+1. Toujours unlock dans le même thread qui a fait lock
+2. Garder la section critique la plus courte possible
+3. Ne jamais oublier de unlock (risque de deadlock)
+4. Un mutex par ressource partagée
+
+FONCTIONS:
+- pthread_mutex_init(&mutex, NULL) → Initialiser
+- pthread_mutex_lock(&mutex) → Verrouiller (bloquant)
+- pthread_mutex_trylock(&mutex) → Essayer de verrouiller (non-bloquant)
+- pthread_mutex_unlock(&mutex) → Déverrouiller
+- pthread_mutex_destroy(&mutex) → Détruire
+
+================================================================================
+3. SYNCHRONISATION AVEC BARRIÈRES
+================================================================================
+
+PRINCIPE: Point de rendez-vous entre N threads
+Tous les threads attendent que le dernier arrive avant de continuer.
+
+CODE TYPE:
+
+pthread_barrier_t barriere;
+
+// Initialisation pour N threads
+pthread_barrier_init(&barriere, NULL, N);
+
+// Dans chaque thread: attendre au rendez-vous
+pthread_barrier_wait(&barriere);  // Tous les threads attendent ici
+
+// Destruction
+pthread_barrier_destroy(&barriere);
+
+UTILISATION TYPIQUE:
+- Synchroniser plusieurs threads à un point précis
+- S'assurer que tous ont fini une étape avant de continuer
+- Exemple: calcul itératif avec dépendances entre itérations
+
+IMPORTANT:
+- La barrière est RÉUTILISABLE automatiquement
+- Un seul thread reçoit PTHREAD_BARRIER_SERIAL_THREAD comme retour
+- Les autres reçoivent 0
+
+EXEMPLE D'UTILISATION:
+
+void* fonction_thread(void* arg) {
+    // Étape 1
+    printf("Thread %d: étape 1\n", id);
+    
+    // Rendez-vous 1
+    pthread_barrier_wait(&barriere);
+    
+    // Étape 2 (tous commencent en même temps)
+    printf("Thread %d: étape 2\n", id);
+    
+    // Rendez-vous 2
+    pthread_barrier_wait(&barriere);
+    
+    return NULL;
+}
+
+================================================================================
+4. VARIABLES DE CONDITION
+================================================================================
+
+PRINCIPE: Attendre qu'une condition devienne vraie
+Plus flexible qu'une barrière, permet d'attendre des événements complexes.
+
+CODE TYPE:
+
+pthread_mutex_t mutex;
+pthread_cond_t cond;
+int compteur = 0;
+
+// Initialisation
+pthread_mutex_init(&mutex, NULL);
+pthread_cond_init(&cond, NULL);
+
+// Thread qui ATTEND une condition
+pthread_mutex_lock(&mutex);
+while (compteur < 3) {  // ⚠️ TOUJOURS while, JAMAIS if !
+    pthread_cond_wait(&cond, &mutex);
+}
+// Ici la condition est vraie
+pthread_mutex_unlock(&mutex);
+
+// Thread qui SIGNALE un changement
+pthread_mutex_lock(&mutex);
+compteur++;
+pthread_cond_signal(&cond);      // Réveille 1 thread
+// OU
+pthread_cond_broadcast(&cond);   // Réveille TOUS les threads
+pthread_mutex_unlock(&mutex);
+
+⚠️ POINTS CRUCIAUX:
+1. Toujours utiliser WHILE (pas if) pour tester la condition
+2. Toujours verrouiller le mutex AVANT pthread_cond_wait
+3. pthread_cond_wait libère le mutex ET endort le thread atomiquement
+4. Au réveil, le mutex est automatiquement réacquis
+
+DIFFÉRENCE signal vs broadcast:
+- pthread_cond_signal() → Réveille UN SEUL thread en attente
+- pthread_cond_broadcast() → Réveille TOUS les threads en attente
+
+PATTERN PRODUCTEUR-CONSOMMATEUR:
+
+// Producteur
+pthread_mutex_lock(&mutex);
+buffer[in] = item;
+in = (in + 1) % SIZE;
+count++;
+pthread_cond_signal(&cond_not_empty);
+pthread_mutex_unlock(&mutex);
+
+// Consommateur
+pthread_mutex_lock(&mutex);
+while (count == 0) {
+    pthread_cond_wait(&cond_not_empty, &mutex);
+}
+item = buffer[out];
+out = (out + 1) % SIZE;
+count--;
+pthread_mutex_unlock(&mutex);
+
+================================================================================
+5. SÉMAPHORES POSIX
+================================================================================
+
+PRINCIPE: Compteur atomique avec blocage
+Plus général qu'un mutex (peut compter > 1)
+
+CODE TYPE:
+
+#include <semaphore.h>
+
+sem_t sem;
+
+// Initialisation (valeur initiale = 1 pour mutex)
+sem_init(&sem, 0, 1);
+
+// P (wait) - décrémente, bloque si 0
+sem_wait(&sem);
+
+// Section critique ou attente
+// ...
+
+// V (post) - incrémente, libère un thread
+sem_post(&sem);
+
+// Destruction
+sem_destroy(&sem);
+
+USAGES TYPIQUES:
+
+1. MUTEX BINAIRE:
+   sem_init(&sem, 0, 1)  → 1 ressource disponible
+   
+2. BARRIÈRE (initialement bloquant):
+   sem_init(&sem, 0, 0)  → Aucune ressource, threads bloqués
+   
+3. POOL DE N RESSOURCES:
+   sem_init(&sem, 0, N)  → N ressources disponibles
+
+EXEMPLE RENDEZ-VOUS:
+
+sem_t sem_mutex;      // Protège compteur
+sem_t sem_barriere;   // Bloque les threads
+int compteur = 0;
+
+sem_init(&sem_mutex, 0, 1);
+sem_init(&sem_barriere, 0, 0);
+
+void rdv() {
+    sem_wait(&sem_mutex);
+    compteur++;
+    if (compteur == N) {
+        // Dernier arrivé, libérer tous
+        for (int i = 0; i < N-1; i++) {
+            sem_post(&sem_barriere);
+        }
+    }
+    sem_post(&sem_mutex);
+    
+    if (compteur < N) {
+        sem_wait(&sem_barriere);  // Attendre
+    }
+}
+
+DIFFÉRENCE AVEC MUTEX:
+- Mutex: DOIT être déverrouillé par le thread qui l'a verrouillé
+- Sémaphore: PEUT être posté par n'importe quel thread
+  → Plus flexible pour la synchronisation
+
+================================================================================
+6. STRATÉGIES DE PARALLÉLISATION
+================================================================================
+
+DÉCOMPOSITION PAR DONNÉES (Data Decomposition)
+Le plus courant pour les problèmes de calcul intensif
+
+A) DISTRIBUTION PAR BLOCS (Block Distribution):
+
+// Chaque thread traite un bloc contigu
+int debut = thread_id * (total / n_threads);
+int fin = (thread_id + 1) * (total / n_threads);
+
+for (int i = debut; i < fin; i++) {
+    // Traiter l'élément i
+}
+
+AVANTAGES:
++ Bonne localité mémoire (cache)
++ Simple à implémenter
+
+INCONVÉNIENTS:
+- Mauvais équilibrage si charge variable
+
+B) DISTRIBUTION CYCLIQUE (Cyclic Distribution):
+
+// Chaque thread traite des éléments espacés
+for (int i = thread_id; i < total; i += n_threads) {
+    // Traiter l'élément i
+}
+
+Thread 0: éléments 0, n, 2n, 3n, ...
+Thread 1: éléments 1, n+1, 2n+1, 3n+1, ...
+Thread i: éléments i, n+i, 2n+i, 3n+i, ...
+
+AVANTAGES:
++ Excellent équilibrage de charge
++ Gère bien la charge variable
+
+INCONVÉNIENTS:
+- Moins bonne localité cache
+
+QUAND UTILISER QUOI?
+
+✅ CYCLIQUE:
+   - Charge de travail VARIABLE (ex: Mandelbrot, matrices creuses)
+   - Nombre de threads != facteur de la taille
+   
+✅ BLOCS:
+   - Charge de travail UNIFORME
+   - Besoin de localité mémoire importante
+   - Accès séquentiels à de grandes structures
+
+C) DISTRIBUTION PAR BLOCS CYCLIQUE:
+
+Compromis: petits blocs distribués cycliquement
+Block_size = total / (n_threads * k) où k > 1
+
+================================================================================
+7. CHECKLIST AVANT LE TP NOTÉ
+================================================================================
+
+SAVOIR ÉCRIRE DE MÉMOIRE:
+
+□ Créer N threads avec pthread_create
+  → pthread_create(&thread, NULL, fonction, &arg)
+  
+□ Passer des paramètres via une structure
+  → typedef struct { int id; ... } Data;
+  
+□ Attendre les threads avec pthread_join
+  → pthread_join(thread, NULL)
+  
+□ Protéger une variable partagée avec un mutex
+  → pthread_mutex_lock/unlock
+  
+□ Implémenter un rendez-vous avec barrière
+  → pthread_barrier_wait
+  
+□ Implémenter un rendez-vous avec condition variable
+  → pthread_cond_wait + pthread_cond_broadcast
+  
+□ Utiliser des sémaphores
+  → sem_wait + sem_post
+  
+□ Mesurer le temps d'exécution avec gettimeofday
+  → struct timeval start, end; gettimeofday(&start, NULL);
+
+COMPRENDRE CONCEPTUELLEMENT:
+
+□ RACE CONDITION: 
+  Quand? Plusieurs threads modifient la même donnée sans protection
+  Pourquoi? Les opérations ne sont pas atomiques
+  
+□ DEADLOCK:
+  Comment l'éviter? Ne jamais verrouiller plusieurs mutex dans un ordre différent
+  
+□ GRANULARITÉ:
+  Fine-grained: Beaucoup de petites tâches → overhead de gestion
+  Coarse-grained: Peu de grosses tâches → mauvais équilibrage
+  
+□ SPEEDUP:
+  Sp = T1 / Tp (temps séquentiel / temps parallèle)
+  Idéal: Sp = p (nombre de threads)
+  
+□ EFFICACITÉ:
+  Ep = Sp / p
+  Mesure l'utilisation des ressources (0 à 1)
+  
+□ LOI D'AMDAHL:
+  Sp_max = 1 / (f + (1-f)/p)
+  où f = fraction séquentielle
+  Limite théorique du parallélisme
+
+================================================================================
+8. PIÈGES À ÉVITER ABSOLUMENT
+================================================================================
+
+1. VARIABLE LOCALE DANS BOUCLE
+
+❌ FAUX:
+for (int i = 0; i < N; i++) {
+    pthread_create(&threads[i], NULL, func, &i);  // ERREUR !
+}
+// Tous les threads voient la même adresse → valeur finale de i
+
+✅ CORRECT:
+int* nums = malloc(N * sizeof(int));
+for (int i = 0; i < N; i++) {
+    nums[i] = i;
+    pthread_create(&threads[i], NULL, func, &nums[i]);
+}
+
+2. OUBLIER LE MUTEX SUR VARIABLE PARTAGÉE
+
+❌ FAUX - Race condition:
+somme = somme + 1;
+
+✅ CORRECT:
+pthread_mutex_lock(&mutex);
+somme = somme + 1;
+pthread_mutex_unlock(&mutex);
+
+3. UTILISER IF AU LIEU DE WHILE AVEC COND_WAIT
+
+❌ FAUX:
+if (condition) {
+    pthread_cond_wait(&cond, &mutex);
+}
+// Réveil intempestif possible
+
+✅ CORRECT:
+while (!condition) {  // Toujours while !
+    pthread_cond_wait(&cond, &mutex);
+}
+
+4. OUBLIER PTHREAD_JOIN
+
+❌ FAUX - Les threads peuvent ne pas finir:
+for (int i = 0; i < N; i++) {
+    pthread_create(&threads[i], NULL, func, NULL);
+}
+// Programme se termine immédiatement !
+
+✅ CORRECT:
+for (int i = 0; i < N; i++) {
+    pthread_create(&threads[i], NULL, func, NULL);
+}
+for (int i = 0; i < N; i++) {
+    pthread_join(threads[i], NULL);
+}
+
+5. DEADLOCK AVEC PLUSIEURS MUTEX
+
+❌ FAUX:
+// Thread 1
+pthread_mutex_lock(&mutex_A);
+pthread_mutex_lock(&mutex_B);
+
+// Thread 2
+pthread_mutex_lock(&mutex_B);
+pthread_mutex_lock(&mutex_A);  // DEADLOCK !
+
+✅ CORRECT - Ordre toujours identique:
+// Tous les threads
+pthread_mutex_lock(&mutex_A);
+pthread_mutex_lock(&mutex_B);
+
+6. NE PAS VÉRIFIER LES VALEURS DE RETOUR
+
+✅ CORRECT:
+int err = pthread_create(&thread, NULL, func, NULL);
+if (err != 0) {
+    fprintf(stderr, "Erreur pthread_create: %d\n", err);
+    exit(EXIT_FAILURE);
+}
+
+7. LIBÉRATION MÉMOIRE INCORRECTE
+
+❌ FAUX:
+void* func(void* arg) {
+    int res = 42;
+    return &res;  // Retourne adresse variable locale !
+}
+
+✅ CORRECT:
+void* func(void* arg) {
+    int* res = malloc(sizeof(int));
+    *res = 42;
+    return res;
+}
+
+// Dans main:
+int* result;
+pthread_join(thread, (void**)&result);
+printf("Résultat: %d\n", *result);
+free(result);  // Ne pas oublier !
+
+================================================================================
+9. TEMPLATE TYPE POUR LE TP NOTÉ
+================================================================================
+
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/time.h>
+
+// Structure de paramètres
+typedef struct {
+    int thread_id;
+    int n_threads;
+    // Autres paramètres selon le problème
+    int param1;
+    double param2;
+    // Pointeurs vers données partagées si nécessaire
+} ThreadData;
+
+// Variables globales si nécessaire (avec mutex !)
+pthread_mutex_t mutex_global;
+int variable_partagee = 0;
+
+// Fonction exécutée par chaque thread
+void* fonction_thread(void* arg) {
+    ThreadData* data = (ThreadData*)arg;
+    int id = data->thread_id;
+    int n = data->n_threads;
+    
+    // VOTRE CODE PARALLÈLE ICI
+    
+    // Exemple: distribution cyclique
+    for (int i = id; i < TOTAL_WORK; i += n) {
+        // Traiter l'élément i
+        
+        // Si besoin de modifier variable partagée:
+        pthread_mutex_lock(&mutex_global);
+        variable_partagee++;
+        pthread_mutex_unlock(&mutex_global);
+    }
+    
+    // Valeur de retour (optionnel)
+    int* resultat = malloc(sizeof(int));
+    *resultat = id;
+    return resultat;
+}
+
+int main(int argc, char* argv[]) {
+    // === 1. VÉRIFIER ARGUMENTS ===
+    if (argc != 3) {
+        fprintf(stderr, "Usage: %s param1 n_threads\n", argv[0]);
+        fprintf(stderr, "  param1    : [description]\n");
+        fprintf(stderr, "  n_threads : nombre de threads\n");
+        return EXIT_FAILURE;
+    }
+    
+    // === 2. RÉCUPÉRER ARGUMENTS ===
+    int param1 = atoi(argv[1]);
+    int n_threads = atoi(argv[2]);
+    
+    // Validation
+    if (param1 <= 0 || n_threads <= 0) {
+        fprintf(stderr, "Erreur: paramètres doivent être > 0\n");
+        return EXIT_FAILURE;
+    }
+    
+    printf("=== Démarrage du programme ===\n");
+    printf("Paramètre 1: %d\n", param1);
+    printf("Nombre de threads: %d\n", n_threads);
+    
+    // === 3. INITIALISER MUTEX/BARRIÈRES ===
+    pthread_mutex_init(&mutex_global, NULL);
+    // pthread_barrier_init(&barriere, NULL, n_threads);
+    // pthread_cond_init(&cond, NULL);
+    // sem_init(&sem, 0, valeur_initiale);
+    
+    // === 4. MESURE DU TEMPS ===
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
+    
+    // === 5. ALLOCATION MÉMOIRE ===
+    pthread_t* threads = malloc(n_threads * sizeof(pthread_t));
+    ThreadData* data = malloc(n_threads * sizeof(ThreadData));
+    
+    if (threads == NULL || data == NULL) {
+        fprintf(stderr, "Erreur: allocation mémoire échouée\n");
+        return EXIT_FAILURE;
+    }
+    
+    // === 6. CRÉER LES THREADS ===
+    printf("\n=== Création de %d threads ===\n", n_threads);
+    for (int i = 0; i < n_threads; i++) {
+        data[i].thread_id = i;
+        data[i].n_threads = n_threads;
+        data[i].param1 = param1;
+        
+        int err = pthread_create(&threads[i], NULL, fonction_thread, &data[i]);
+        if (err != 0) {
+            fprintf(stderr, "Erreur pthread_create thread %d: %d\n", i, err);
+            free(threads);
+            free(data);
+            return EXIT_FAILURE;
+        }
+    }
+    
+    // === 7. ATTENDRE LES THREADS ===
+    printf("\n=== Attente de la terminaison ===\n");
+    for (int i = 0; i < n_threads; i++) {
+        int* resultat;
+        pthread_join(threads[i], (void**)&resultat);
+        
+        if (resultat != NULL) {
+            printf("Thread %d terminé, résultat: %d\n", i, *resultat);
+            free(resultat);
+        }
+    }
+    
+    // === 8. ARRÊT DU CHRONOMÈTRE ===
+    gettimeofday(&end, NULL);
+    double elapsed = (end.tv_sec - start.tv_sec) + 
+                     (end.tv_usec - start.tv_usec) / 1000000.0;
+    
+    printf("\n=== Résultats ===\n");
+    printf("Temps d'exécution: %.3f secondes\n", elapsed);
+    printf("Variable partagée finale: %d\n", variable_partagee);
+    
+    // === 9. NETTOYAGE ===
+    free(threads);
+    free(data);
+    pthread_mutex_destroy(&mutex_global);
+    // pthread_barrier_destroy(&barriere);
+    // pthread_cond_destroy(&cond);
+    // sem_destroy(&sem);
+    
+    return EXIT_SUCCESS;
+}
+
+COMPILATION:
+gcc programme.c -o programme -lpthread -Wall
+
+EXÉCUTION:
+./programme 1000 4
+
+MESURE DU TEMPS:
+time ./programme 1000 4
+
+================================================================================
+10. QUESTIONS TYPE À PRÉPARER
+================================================================================
+
+Q1: "Expliquez votre stratégie de parallélisation"
+
+RÉPONSE TYPE:
+"J'ai utilisé une décomposition par partitionnement des données de sortie 
+(output data decomposition). Le problème a été divisé en N tâches indépendantes,
+chaque thread traitant une portion des données selon une distribution [cyclique/
+par blocs]. J'ai choisi [cyclique/blocs] car [justification basée sur la charge
+de travail]."
+
+JUSTIFICATIONS POSSIBLES:
+- Cyclique: "La charge de travail est variable selon la position dans les 
+  données, donc une distribution cyclique assure un meilleur équilibrage"
+- Blocs: "La charge est uniforme et il y a un bénéfice de localité cache 
+  avec des accès contigus en mémoire"
+
+--------------------------------------------------------------------------------
+
+Q2: "Avez-vous utilisé des mécanismes de synchronisation ? Si oui, lesquels 
+     et pourquoi ? Si non, pourquoi ?"
+
+RÉPONSE SI OUI:
+"Oui, j'ai utilisé [mutex/barrière/condition/sémaphore] car [raison]:
+- Mutex: Pour protéger l'accès à la variable partagée [nom_variable] qui est
+  modifiée par plusieurs threads simultanément
+- Barrière: Pour synchroniser les threads au point [description] afin que tous
+  aient terminé l'étape X avant de commencer l'étape Y"
+
+RÉPONSE SI NON:
+"Non, car chaque thread travaille sur des données complètement indépendantes.
+Le thread i traite uniquement [description des données], ce qui garantit qu'il
+n'y a jamais d'accès concurrent à la même zone mémoire. La seule synchronisation
+est l'appel à pthread_join() dans le main pour attendre la fin de tous les 
+threads avant de traiter les résultats."
+
+--------------------------------------------------------------------------------
+
+Q3: "Votre stratégie répartit-elle équitablement la charge de travail ?"
+
+RÉPONSE AVEC DISTRIBUTION CYCLIQUE:
+"Oui, la distribution cyclique assure un bon équilibrage car:
+1. Chaque thread reçoit un échantillon représentatif de toutes les régions
+2. Les éléments coûteux (ex: centre de Mandelbrot) sont répartis entre threads
+3. Évite qu'un thread finisse beaucoup plus tard que les autres
+4. Dans le pire cas, la différence de charge entre threads est d'au plus
+   une itération de la boucle principale"
+
+RÉPONSE AVEC DISTRIBUTION PAR BLOCS (si charge 
