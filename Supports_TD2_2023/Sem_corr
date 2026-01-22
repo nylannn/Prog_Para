@@ -1,0 +1,140 @@
+/******************** Fichier thrdv_semaphore.c **********************/
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <string.h>
+#include <semaphore.h>  // Pour les sémaphores [file:2]
+#include "barx.h"
+
+char buf[20];
+
+// Sémaphores et mutex pour le rendez-vous [file:2]
+sem_t sem_mutex;           // Sémaphore binaire (mutex) pour protéger compteur
+sem_t sem_barriere;        // Sémaphore pour bloquer les threads
+int compteur_arrives = 0;  // Compteur de threads arrivés
+const int TOTAL_THREADS = 3;
+
+typedef struct {
+    int numero;
+    int longueur;
+} ThreadParams;
+
+int liretty(char *prompt, char *buffer)
+{
+    int i;
+    printf("\n%s", prompt);
+    i = scanf("%s", buffer);
+    return strlen(buffer);
+}
+
+/* Fonction rendez-vous avec sémaphores [file:2] */
+void rdv(int numero)
+{
+    // sem_wait() décrémente le sémaphore (opération P) [file:2]
+    // Si valeur = 0, le thread est bloqué
+    sem_wait(&sem_mutex);  // Protéger l'accès au compteur
+    
+    compteur_arrives++;
+    printf("Thread %d: j'arrive au rendez-vous (%d/%d)\n", 
+           numero, compteur_arrives, TOTAL_THREADS);
+    
+    if (compteur_arrives == TOTAL_THREADS) {
+        printf("Thread %d: dernier arrivé, je libère tout le monde\n", numero);
+        
+        // Libérer les N-1 autres threads [file:2]
+        for (int i = 0; i < TOTAL_THREADS - 1; i++) {
+            // sem_post() incrémente le sémaphore (opération V) [file:2]
+            sem_post(&sem_barriere);
+        }
+    }
+    
+    sem_post(&sem_mutex);  // Libérer le mutex
+    
+    // Si ce n'est pas le dernier, attendre d'être libéré
+    if (compteur_arrives < TOTAL_THREADS) {
+        printf("Thread %d: je m'endors...\n", numero);
+        sem_wait(&sem_barriere);  // Bloquer jusqu'à sem_post
+        printf("Thread %d: je me réveille !\n", numero);
+    }
+}
+
+void *th_fonc(void *arg)
+{
+    ThreadParams *params = (ThreadParams*)arg;
+    int numero = params->numero;
+    int mi = params->longueur;
+    
+    int y_position = 50 + (numero * 50);
+    char num_str[10];
+    sprintf(num_str, "_%d_", numero);
+    
+    drawstr(30, y_position + 25, num_str, strlen(num_str));
+    drawrec(100, y_position, 100 + mi*10, 30);
+    
+    char *couleur;
+    if (numero == 0) couleur = "yellow";
+    else if (numero == 1) couleur = "green";
+    else couleur = "blue";
+    
+    for (int j = 1; j <= mi; j++)
+    {
+        printf("Thread %d: étape %d/%d\n", numero, j, mi);
+        usleep(500000);
+        
+        fillrec(100, y_position + 2, 100 + j*10, 26, couleur);
+        flushdis();
+        
+        if (j == 10) {
+            drawrec(100 + j*10 - 2, y_position, 4, 30);
+            flushdis();
+            rdv(numero);
+        }
+    }
+    
+    int *res = malloc(sizeof(int));
+    *res = numero;
+    return res;
+}
+
+int main()
+{
+    int nlu;
+    pthread_t threads[3];
+    ThreadParams params[3];
+    int longueurs[3] = {20, 15, 25};
+    
+    initrec();
+    printf("=== Version avec sémaphores ===\n");
+    
+    // Initialisation des sémaphores [file:2]
+    // sem_init(sémaphore, partagé_entre_processus, valeur_initiale)
+    sem_init(&sem_mutex, 0, 1);       // Mutex binaire (valeur = 1)
+    sem_init(&sem_barriere, 0, 0);    // Barrière (valeur = 0, bloquant)
+    
+    for (int i = 0; i < 3; i++)
+    {
+        params[i].numero = i;
+        params[i].longueur = longueurs[i];
+        pthread_create(&threads[i], NULL, th_fonc, &params[i]);
+    }
+    
+    for (int i = 0; i < 3; i++)
+    {
+        int *res;
+        pthread_join(threads[i], (void**)&res);
+        printf("Thread %d terminé\n", i);
+        free(res);
+    }
+    
+    printf("\n=== Tous les threads ont terminé ===\n");
+    
+    // Destruction des sémaphores [file:2]
+    sem_destroy(&sem_mutex);
+    sem_destroy(&sem_barriere);
+    
+    nlu = liretty("Appuyez sur Entrée pour sortir", buf);
+    detruitrec();
+    
+    return EXIT_SUCCESS;
+}
