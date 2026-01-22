@@ -1,0 +1,125 @@
+/******************** Fichier thx.c **********************/
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <string.h>
+#include "barx.h"
+
+char buf[20];
+
+// Structure pour passer les paramètres à chaque thread
+typedef struct {
+    int numero;      // Numéro du thread (0, 1 ou 2)
+    int longueur;    // Longueur du rectangle à remplir (m1, m2, m3)
+} ThreadParams;
+
+/* Fonction pause pour l'utilisateur */
+int liretty(char *prompt, char *buffer)
+{
+    int i;
+    printf("\n%s", prompt);
+    i = scanf("%s", buffer);
+    return strlen(buffer);
+}
+
+/* Fonction exécutée par chaque thread */
+void *th_fonc(void *arg)
+{
+    // Récupération des paramètres passés au thread
+    ThreadParams *params = (ThreadParams*)arg;
+    int numero = params->numero;
+    int mi = params->longueur;
+    
+    printf("Thread %d démarré avec longueur %d\n", numero, mi);
+    
+    // Position verticale du rectangle selon le numéro du thread
+    // Thread 0 → y=50, Thread 1 → y=100, Thread 2 → y=150
+    int y_position = 50 + (numero * 50);
+    
+    char num_str[10];
+    sprintf(num_str, "_%d_", numero);
+    
+    // 1. Écrire le numéro du thread dans la fenêtre [file:36]
+    drawstr(30, y_position + 25, num_str, strlen(num_str));
+    
+    // 2. Tracer un rectangle vide (contours blancs) [file:36]
+    // Position: (100, y_position), largeur: 100+mi*10, hauteur: 30
+    drawrec(100, y_position, 100 + mi*10, 30);
+    
+    // 3. Boucle de remplissage progressif du rectangle
+    for (int j = 1; j <= mi; j++)
+    {
+        printf("Thread %d: étape %d/%d\n", numero, j, mi);
+        
+        // Pause de 0.5 seconde pour visualiser le remplissage [file:34]
+        usleep(500000);
+        
+        // Remplir progressivement le rectangle avec une couleur [file:36]
+        // Chaque thread a une couleur différente
+        char *couleur;
+        if (numero == 0) couleur = "yellow";
+        else if (numero == 1) couleur = "green";
+        else couleur = "blue";
+        
+        fillrec(100, y_position + 2, 100 + j*10, 26, couleur);
+    }
+    
+    // Rafraîchir l'affichage [file:36]
+    flushdis();
+    
+    // 4. Retourner le numéro du thread comme valeur de retour
+    int *res = malloc(sizeof(int));
+    *res = numero;
+    return res;
+}
+
+int main()
+{
+    int nlu;
+    pthread_t threads[3];           // Tableau pour stocker les 3 threads [file:6]
+    ThreadParams params[3];         // Paramètres pour chaque thread
+    int longueurs[3] = {20, 15, 25}; // Longueurs différentes pour chaque thread
+    
+    // 1. Initialisation de la fenêtre graphique [file:36]
+    initrec();
+    printf("=== Démarrage du programme avec 3 threads ===\n");
+    
+    // 2. Création des 3 threads [file:6]
+    for (int i = 0; i < 3; i++)
+    {
+        params[i].numero = i;
+        params[i].longueur = longueurs[i];
+        
+        // pthread_create() crée le thread [file:6]
+        int err = pthread_create(&threads[i], NULL, th_fonc, &params[i]);
+        if (err != 0) {
+            fprintf(stderr, "Erreur création thread %d: %d\n", i, err);
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    // 3. Attente de la fin des 3 threads [file:6]
+    for (int i = 0; i < 3; i++)
+    {
+        int *res;
+        // pthread_join() attend la terminaison du thread [file:6]
+        // et récupère sa valeur de retour dans res
+        pthread_join(threads[i], (void**)&res);
+        
+        printf("Thread %d terminé, valeur retournée: %d\n", i, *res);
+        free(res);
+    }
+    
+    printf("\n=== Tous les threads ont terminé ===\n");
+    
+    // 4. Attente d'une saisie utilisateur avant de fermer
+    nlu = liretty("Appuyez sur Entrée pour sortir", buf);
+    
+    printf("--fin--\n");
+    
+    // 5. Destruction de la fenêtre [file:36]
+    detruitrec();
+    
+    return EXIT_SUCCESS;
+}
